@@ -41,6 +41,7 @@ module.exports = {
     campaignId: env('KIT_CAMPAIGN_ID'),
     taskPriority: env('KIT_TASK_PRIORITY', '1'),
     timezone: env('KIT_TIMEZONE', ''),
+    tzAutodetect: env('KIT_TZ_AUTODETECT', 'true') !== 'false',
     rps: num('KIT_RPS', 2),
     pollMs: num('KIT_POLL_MS', 60000),
     chunkSize: num('KIT_CHUNK_SIZE', 100),

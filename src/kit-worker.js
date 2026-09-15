@@ -22,15 +22,45 @@ function toKitRow(r) {
 }
 
 async function postRows(rows) {
-  const body = new URLSearchParams({
+  const params = {
     access_token: cfg.kit.accessToken,
     campaign_id: cfg.kit.campaignId,
     rows: JSON.stringify(rows.map(toKitRow)),
-  });
-  const r = await limit(() => httpPost(url, { body }, cfg.httpTimeoutMs));
+  };
+  // Kit не обрабатывает контакт без таймзоны. Автоопределение — по коду номера.
+  if (cfg.kit.tzAutodetect) params.tz_autodetection_enabled = 'true';
+  const r = await limit(() => httpPost(url, { body: new URLSearchParams(params) }, cfg.httpTimeoutMs));
   r.answer = (r.json ? JSON.stringify(r.json) : r.text).slice(0, 500);
   r.accepted = r.status === 200 && r.json && r.json.success !== false;
   return r;
+}
+
+// Kit отвечает 200 + success:true даже если ни один контакт не принят. Реальный итог —
+// в result: { success_contacts, failed_contacts, invalid_phones: [row], invalid_tz: [row],
+// invalid_personal_agent: [row] }. Отклонённые строки сопоставляем с заявками по deal_link.
+const REJECT_LISTS = ['invalid_phones', 'invalid_tz', 'invalid_personal_agent'];
+
+/** @returns {Map<string, string>} deal_id → причина */
+function rejectedByDeal(result) {
+  const map = new Map();
+  if (!result || typeof result !== 'object') return map;
+  for (const key of REJECT_LISTS) {
+    for (const row of Array.isArray(result[key]) ? result[key] : []) {
+      const m = /details\/(\d+)/.exec((row && row.deal_link) || '');
+      if (m) map.set(m[1], key);
+    }
+  }
+  return map;
+}
+
+async function markRejected(rows, reasons) {
+  for (const row of rows) {
+    const why = `kit rejected: ${reasons.get(String(row.deal_id))}`;
+    await pool.query(`
+      UPDATE b24_kit_queue SET status = 'kit_error', kit_status = 200, reason = $2,
+        attempts = attempts + 1, updated_at = now() WHERE id = $1`, [row.id, why]);
+    log.warn(`kit: deal ${row.deal_id} отклонена Kit → kit_error (${why})`);
+  }
 }
 
 async function markSent(rows, answer) {
@@ -57,7 +87,21 @@ const isDataError = (r) => r.status >= 400 && r.status < 500 && ![401, 403, 429]
 /** @returns {boolean} успех — чтобы при сбое Kit не долбить его остальными пачками в этом тике */
 async function sendChunk(chunk) {
   const r = await postRows(chunk);
-  if (r.accepted) { await markSent(chunk, r.answer); return true; }
+  if (r.accepted) {
+    const res = r.json.result;
+    const rejected = rejectedByDeal(res);
+    const ok = chunk.filter((x) => !rejected.has(String(x.deal_id)));
+    const bad = chunk.filter((x) => rejected.has(String(x.deal_id)));
+    const summary = res && typeof res === 'object' && 'success_contacts' in res
+      ? `success=${res.success_contacts} failed=${res.failed_contacts}`
+      : r.answer;
+    if (res && Number(res.failed_contacts) > bad.length) {
+      log.error(`kit: Kit отклонил ${res.failed_contacts} контактов, но сопоставить по deal_link удалось только ${bad.length}. Ответ: ${r.answer}`);
+    }
+    if (ok.length) await markSent(ok, summary);
+    if (bad.length) await markRejected(bad, rejected);
+    return true;
+  }
 
   if (!isDataError(r) || chunk.length === 1) { await markFailed(chunk, r); return false; }
 
