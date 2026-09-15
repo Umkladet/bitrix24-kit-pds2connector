@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Разворачивает b24-kit-queue на чистой Ubuntu 22.04/24.04 одной командой.
 #
-#   git clone <url> /opt/b24-kit-queue && sudo bash /opt/b24-kit-queue/deploy/install.sh
+#   git clone https://github.com/Umkladet/bitrix24-kit-pds2connector.git /opt/b24-kit-queue && sudo bash /opt/b24-kit-queue/deploy/install.sh
 #
 # Повторный запуск безопасен: подтягивает код, пересобирает и перезапускает контейнеры,
 # .env не трогает. Обновление после git pull: sudo bash deploy/install.sh

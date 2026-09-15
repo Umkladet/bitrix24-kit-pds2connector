@@ -63,7 +63,7 @@ dig +short kit-queue.вашдомен.ru
 
 ```bash
 ssh ваш_логин@ПУБЛИЧНЫЙ_IP
-git clone <URL_РЕПОЗИТОРИЯ> /opt/b24-kit-queue && sudo bash /opt/b24-kit-queue/deploy/install.sh
+git clone https://github.com/Umkladet/bitrix24-kit-pds2connector.git /opt/b24-kit-queue && sudo bash /opt/b24-kit-queue/deploy/install.sh
 ```
 
 Скрипт ставит Docker, настраивает ufw и swap, задаёт вопросы для `.env` (домен, почта, вебхуки, токены), проверяет A-запись, собирает и запускает контейнеры, ставит бэкап в cron и в конце ждёт ответа `https://<домен>/health`.

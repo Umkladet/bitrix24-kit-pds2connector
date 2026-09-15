@@ -22,7 +22,7 @@
 Развёртывание на сервере — в [DEPLOY.md](DEPLOY.md). На чистой Ubuntu:
 
 ```bash
-git clone <url> /opt/b24-kit-queue && sudo bash /opt/b24-kit-queue/deploy/install.sh
+git clone https://github.com/Umkladet/bitrix24-kit-pds2connector.git /opt/b24-kit-queue && sudo bash /opt/b24-kit-queue/deploy/install.sh
 ```
 
 Локально нужны Node.js ≥ 20 и PostgreSQL. Таблицы создаются автоматически при старте (`schema.sql`, идемпотентно).
