@@ -1,0 +1,15 @@
+{
+  "name": "b24-kit-queue",
+  "version": "1.0.0",
+  "description": "Bitrix24 deal webhook → PostgreSQL queue → Voximplant Kit campaign",
+  "main": "src/index.js",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --env-file=.env src/index.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}

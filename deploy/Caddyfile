@@ -1,0 +1,16 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	# Сертификат Let's Encrypt выпускается и продлевается автоматически
+	encode gzip
+
+	# Вебхук Битрикса и health-check
+	reverse_proxy app:3000
+
+	log {
+		output stdout
+		format console
+	}
+}

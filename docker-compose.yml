@@ -1,0 +1,90 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: b24kit
+      POSTGRES_USER: b24kit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U b24kit -d b24kit"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Порт наружу не публикуется: база доступна только внутри сети compose
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://b24kit:${POSTGRES_PASSWORD}@db:5432/b24kit
+      PORT: 3000
+      WEBHOOK_PATH: ${WEBHOOK_PATH:-/b24/webhook}
+      B24_REST_URL: ${B24_REST_URL:?}
+      B24_PORTAL: ${B24_PORTAL:?}
+      B24_APP_TOKEN: ${B24_APP_TOKEN:?}
+      B24_EVENTS: ${B24_EVENTS:-ONCRMDEALADD,ONCRMDEALUPDATE}
+      B24_TRIGGER_STAGE_ID: ${B24_TRIGGER_STAGE_ID:-}
+      B24_CATEGORY_ID: ${B24_CATEGORY_ID:-}
+      B24_RPS: ${B24_RPS:-2}
+      B24_POLL_MS: ${B24_POLL_MS:-5000}
+      B24_BATCH_SIZE: ${B24_BATCH_SIZE:-4}
+      KIT_BASE_URL: ${KIT_BASE_URL:-https://kitapi-ru.voximplant.com}
+      KIT_DOMAIN: ${KIT_DOMAIN:?}
+      KIT_ACCESS_TOKEN: ${KIT_ACCESS_TOKEN:?}
+      KIT_CAMPAIGN_ID: ${KIT_CAMPAIGN_ID:?}
+      KIT_TASK_PRIORITY: ${KIT_TASK_PRIORITY:-1}
+      KIT_TIMEZONE: ${KIT_TIMEZONE:-}
+      KIT_RPS: ${KIT_RPS:-2}
+      KIT_POLL_MS: ${KIT_POLL_MS:-60000}
+      KIT_CHUNK_SIZE: ${KIT_CHUNK_SIZE:-100}
+      KIT_MAX_PER_TICK: ${KIT_MAX_PER_TICK:-1000}
+      RECONCILE_ENABLED: ${RECONCILE_ENABLED:-true}
+      RECONCILE_POLL_MS: ${RECONCILE_POLL_MS:-900000}
+      RECONCILE_LOOKBACK_MIN: ${RECONCILE_LOOKBACK_MIN:-120}
+      RECONCILE_MAX_PAGES: ${RECONCILE_MAX_PAGES:-20}
+      RECONCILE_RECHECK_MIN: ${RECONCILE_RECHECK_MIN:-60}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-8}
+      RETRY_BASE_SEC: ${RETRY_BASE_SEC:-30}
+      RETRY_MAX_SEC: ${RETRY_MAX_SEC:-1800}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      HTTP_TIMEOUT_MS: ${HTTP_TIMEOUT_MS:-15000}
+    # Воркеры рассчитаны на один экземпляр — deploy.replicas увеличивать нельзя
+    stop_grace_period: 90s   # дать текущему тику завершиться (пачка в Kit по одной — до минуты)
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?задайте APP_DOMAIN в .env}
+      ACME_EMAIL: ${ACME_EMAIL:?задайте ACME_EMAIL в .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
