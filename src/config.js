@@ -15,16 +15,24 @@ function num(name, def) {
   return v;
 }
 
+/** Секрет: пусто или заглушка CHANGE_ME считаются «не задан» */
+function secret(name) {
+  const v = env(name, '');
+  return v === 'CHANGE_ME' ? '' : v;
+}
+
 module.exports = {
   port: num('PORT', 3000),
   webhookPath: env('WEBHOOK_PATH', '/b24/webhook'),
+  webhookSecret: secret('WEBHOOK_SECRET'),
   databaseUrl: env('DATABASE_URL'),
   httpTimeoutMs: num('HTTP_TIMEOUT_MS', 15000),
 
   b24: {
     restUrl: env('B24_REST_URL').replace(/\/?$/, '/'),
     portal: env('B24_PORTAL'),
-    appToken: env('B24_APP_TOKEN'),
+    appToken: secret('B24_APP_TOKEN'),
+    memberId: env('B24_MEMBER_ID', ''),
     events: env('B24_EVENTS', 'ONCRMDEALADD,ONCRMDEALUPDATE')
       .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
     triggerStageId: env('B24_TRIGGER_STAGE_ID', ''),
@@ -64,3 +72,7 @@ module.exports = {
 
   retentionDays: num('RETENTION_DAYS', 30),
 };
+
+if (!module.exports.b24.appToken && !module.exports.webhookSecret) {
+  throw new Error('Нужен хотя бы один из B24_APP_TOKEN (исходящий вебхук) или WEBHOOK_SECRET (?key= в URL робота)');
+}

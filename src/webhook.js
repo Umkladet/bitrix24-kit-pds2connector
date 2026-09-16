@@ -1,6 +1,18 @@
 'use strict';
-// Приём исходящего вебхука Б24: только проверка и запись в очередь.
+// Приём вебхука Б24: только проверка и запись в очередь.
+//
+// Поддерживаются два формата, которые шлёт Битрикс:
+//   1. Исходящий вебхук по событию (Разработчикам → Исходящий вебхук):
+//      event=ONCRMDEALUPDATE, data[FIELDS][ID]=<deal>, auth[application_token]=<token>
+//   2. Робот «Вебхук» из автоматизации CRM (срабатывает при входе сделки на стадию):
+//      document_id[1]=CCrmDocumentDeal, document_id[2]=DEAL_<deal>, без event и без токена
+//
+// Авторизация: auth[domain] должен совпасть с B24_PORTAL, и хотя бы одно из:
+//   - auth[application_token] == B24_APP_TOKEN            (формат 1)
+//   - ?key=<WEBHOOK_SECRET> в URL обработчика              (формат 2, подходит и для 1)
+// Опционально auth[member_id] == B24_MEMBER_ID.
 const http = require('node:http');
+const crypto = require('node:crypto');
 const cfg = require('./config');
 const { pool } = require('./db');
 const { log } = require('./lib');
@@ -13,6 +25,13 @@ const INSERT_SQL = `
 
 function send(res, code, text) {
   res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' }).end(text);
+}
+
+/** Сравнение секретов без утечки по времени; пустой эталон никогда не совпадает */
+function safeEq(actual, expected) {
+  if (!expected || typeof actual !== 'string') return false;
+  const a = Buffer.from(actual), b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 function readBody(req) {
@@ -29,8 +48,19 @@ function readBody(req) {
   });
 }
 
+/** @returns {{event: string, dealId: number}|null} */
+function parseDeal(p) {
+  const event = (p.get('event') || '').toUpperCase();
+  const fromEvent = Number(p.get('data[FIELDS][ID]'));
+  if (event && Number.isInteger(fromEvent) && fromEvent > 0) return { event, dealId: fromEvent };
+
+  const m = /^DEAL_(\d+)$/.exec(p.get('document_id[2]') || '');
+  if (m && p.get('document_id[1]') === 'CCrmDocumentDeal') return { event: 'ROBOT', dealId: Number(m[1]) };
+  return null;
+}
+
 async function handle(req, res) {
-  const { pathname } = new URL(req.url, 'http://localhost');
+  const { pathname, searchParams } = new URL(req.url, 'http://localhost');
 
   if (req.method === 'GET' && pathname === '/health') {
     try { await pool.query('SELECT 1'); return send(res, 200, 'ok'); }
@@ -42,26 +72,30 @@ async function handle(req, res) {
   try { raw = await readBody(req); } catch { return send(res, 413, 'too large'); }
   const p = new URLSearchParams(raw);
 
-  if (p.get('auth[application_token]') !== cfg.b24.appToken || p.get('auth[domain]') !== cfg.b24.portal) {
-    log.warn(`webhook: неверный application_token или домен (${p.get('auth[domain]')}) — отклонено`);
+  const domain = p.get('auth[domain]');
+  const authOk = domain === cfg.b24.portal
+    && (!cfg.b24.memberId || safeEq(p.get('auth[member_id]'), cfg.b24.memberId))
+    && (safeEq(p.get('auth[application_token]'), cfg.b24.appToken)
+        || safeEq(searchParams.get('key'), cfg.webhookSecret));
+  if (!authOk) {
+    log.warn(`webhook: не прошёл проверку (domain=${domain}, ` +
+      `application_token=${p.has('auth[application_token]') ? 'есть' : 'нет'}, key=${searchParams.has('key') ? 'есть' : 'нет'}) — отклонено`);
     return send(res, 403, 'forbidden');
   }
 
-  const event = (p.get('event') || '').toUpperCase();
-  if (!cfg.b24.events.includes(event)) return send(res, 200, 'ignored');
-
-  const dealId = Number(p.get('data[FIELDS][ID]'));
-  if (!Number.isInteger(dealId) || dealId <= 0) {
-    log.warn(`webhook: ${event} без корректного ID сделки`);
+  const deal = parseDeal(p);
+  if (!deal) {
+    log.warn(`webhook: не удалось определить сделку (event=${p.get('event')}, document_id=${p.get('document_id[1]')}/${p.get('document_id[2]')})`);
     return send(res, 400, 'bad deal id');
   }
+  if (deal.event !== 'ROBOT' && !cfg.b24.events.includes(deal.event)) return send(res, 200, 'ignored');
 
   try {
-    const r = await pool.query(INSERT_SQL, [dealId, event]);
-    log.info(r.rowCount ? `webhook: deal ${dealId} в очереди (${event})` : `webhook: deal ${dealId} уже в очереди — дубль`);
+    const r = await pool.query(INSERT_SQL, [deal.dealId, deal.event]);
+    log.info(r.rowCount ? `webhook: deal ${deal.dealId} в очереди (${deal.event})` : `webhook: deal ${deal.dealId} уже в очереди — дубль`);
     return send(res, 200, 'ok');
   } catch (e) {
-    log.error(`webhook: deal ${dealId} не записан в БД — ${e.message}`);
+    log.error(`webhook: deal ${deal.dealId} не записан в БД — ${e.message}`);
     return send(res, 500, 'db error');
   }
 }

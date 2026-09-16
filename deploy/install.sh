@@ -51,7 +51,8 @@ if [[ ! -f .env ]]; then
   ask ACME_EMAIL     "E-mail для Let's Encrypt"
   ask B24_PORTAL     "Портал Битрикс24" "ukids-academy.bitrix24.ru"
   ask B24_REST_URL   "Входящий вебхук Б24 (https://…/rest/ID/CODE/)"
-  ask B24_APP_TOKEN  "application_token исходящего вебхука Б24" "CHANGE_ME"
+  ask B24_APP_TOKEN  "Код авторизации исходящего вебхука Б24 (пусто, если используете робота)" "-"
+  [[ $B24_APP_TOKEN == "-" ]] && B24_APP_TOKEN=""
   ask B24_STAGE      "Целевая стадия сделки (STAGE_ID, напр. C0:NEW)"
   ask KIT_DOMAIN     "Домен Kit" "ukids"
   ask KIT_TOKEN      "access_token Kit" "CHANGE_ME"
@@ -64,6 +65,7 @@ POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-32)
 B24_REST_URL=$B24_REST_URL
 B24_PORTAL=$B24_PORTAL
 B24_APP_TOKEN=$B24_APP_TOKEN
+WEBHOOK_SECRET=$(openssl rand -hex 16)
 B24_TRIGGER_STAGE_ID=$B24_STAGE
 
 KIT_DOMAIN=$KIT_DOMAIN
@@ -75,6 +77,12 @@ RECONCILE_POLL_MS=300000
 ENV
   chmod 600 .env
   echo ".env записан. Остальные параметры и их дефолты — в .env.example"
+fi
+
+# WEBHOOK_SECRET появился позже первой версии — дописываем в старый .env
+if ! grep -q '^WEBHOOK_SECRET=' .env; then
+  printf '\n# секрет для URL робота «Вебхук»: ?key=<значение>\nWEBHOOK_SECRET=%s\n' "$(openssl rand -hex 16)" >> .env
+  echo "В .env добавлен WEBHOOK_SECRET"
 fi
 
 # shellcheck disable=SC1091
@@ -112,11 +120,12 @@ fi
 
 step "Готово"
 cat <<TXT
-  URL для исходящего вебхука Битрикс24:  https://$APP_DOMAIN${WEBHOOK_PATH:-/b24/webhook}
+  URL для робота «Вебхук» в Битрикс24:  https://$APP_DOMAIN${WEBHOOK_PATH:-/b24/webhook}?key=${WEBHOOK_SECRET:-}
+  URL для исходящего вебхука по событию: https://$APP_DOMAIN${WEBHOOK_PATH:-/b24/webhook}   (+ B24_APP_TOKEN в .env)
   Конфиг:                                $APP_DIR/.env  (после правки: cd $APP_DIR && docker compose up -d)
   Логи:                                  cd $APP_DIR && docker compose logs -f app
   Очередь:                               cd $APP_DIR && docker compose exec db psql -U b24kit b24kit -c "SELECT status,count(*) FROM b24_kit_queue GROUP BY 1"
 TXT
-[[ ${B24_APP_TOKEN:-} == CHANGE_ME || ${KIT_ACCESS_TOKEN:-} == CHANGE_ME ]] && \
-  echo "  ! В .env остались значения CHANGE_ME — впишите токены и выполните: cd $APP_DIR && docker compose up -d"
+[[ ${KIT_ACCESS_TOKEN:-} == CHANGE_ME ]] && \
+  echo "  ! KIT_ACCESS_TOKEN=CHANGE_ME — впишите токен и выполните: cd $APP_DIR && docker compose up -d"
 exit 0
